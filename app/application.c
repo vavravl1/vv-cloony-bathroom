@@ -1,4 +1,6 @@
-#include <application.h>
+#include "application.h"
+#include "vv_radio.h"
+
 #include <bc_led.h>
 #include <bc_button.h>
 #include <bcl.h>
@@ -11,6 +13,9 @@ void application_init(void) {
     initialize_radio();
     initialize_tags();
     initialize_external_relay();
+
+    application.humidity_large_start = BC_TICK_INFINITY;
+    application.humidity_large_stop =  BC_TICK_INFINITY;
 }
 
 void application_task(void) {
@@ -69,6 +74,7 @@ static void initialize_button() {
 static void initialize_radio() {
     bc_radio_init(BC_RADIO_MODE_NODE_LISTENING);
     bc_radio_pairing_request("bathroom-controller", "0.0.1");
+    bc_radio_set_event_handler(radio_callback, NULL);
 }
 
 static void initialize_tags() {
@@ -98,9 +104,15 @@ static void humidity_tag_callback(bc_tag_humidity_t *tag, bc_tag_humidity_event_
     if (bc_tag_humidity_get_humidity_percentage(tag, &humidity)) {
         bc_radio_pub_humidity(0, &humidity);
         if (humidity > 65) {
-            application.humidity_too_large_timestamp = bc_scheduler_get_spin_tick();
+            if(application.humidity_large_start == BC_TICK_INFINITY) {
+                application.humidity_large_start = bc_scheduler_get_spin_tick();
+            }
+            application.humidity_large_stop = BC_TICK_INFINITY;
         } else {
-            application.humidity_too_large_timestamp = BC_TICK_INFINITY;
+            if(application.humidity_large_stop == BC_TICK_INFINITY) {
+                application.humidity_large_stop = bc_scheduler_get_spin_tick();
+            }
+            application.humidity_large_start = BC_TICK_INFINITY;
         }
     }
 }
@@ -118,12 +130,59 @@ static void initialize_external_relay() {
     bc_gpio_set_output(BC_GPIO_P8, false);
 }
 
+static void radio_callback(bc_radio_event_t event, void *param) {
+    bc_led_set_mode(&application.builtin_led, BC_LED_MODE_OFF);
+
+    if (event == BC_RADIO_EVENT_ATTACH) {
+        bc_led_pulse(&application.builtin_led, 1000);
+    } else if (event == BC_RADIO_EVENT_DETACH) {
+        bc_led_pulse(&application.builtin_led, 1000);
+    } else if (event == BC_RADIO_EVENT_INIT_DONE) {
+        application.my_id = bc_radio_get_my_id();
+    }
+}
+
 static void adjust_air_ventilation() {
-    if (application.humidity_too_large_timestamp == BC_TICK_INFINITY) {
-        bc_gpio_set_output(BC_GPIO_P8, false);
-    } else {
-        bool humidity_too_large_for_too_long = bc_scheduler_get_spin_tick() >
-                                               application.humidity_too_large_timestamp + 10000;
-        bc_gpio_set_output(BC_GPIO_P8, humidity_too_large_for_too_long);
+    bool ventilation_state = (bool)bc_gpio_get_output(BC_GPIO_P8);
+    bool humidity_ventilation_state = false;
+
+    if (application.humidity_large_start != BC_TICK_INFINITY) {
+        humidity_ventilation_state = ventilation_state ||
+                (bc_scheduler_get_spin_tick() > application.humidity_large_start + 10000);
+    }
+
+    if (application.humidity_large_stop != BC_TICK_INFINITY) {
+        humidity_ventilation_state = ventilation_state &&
+                (bc_scheduler_get_spin_tick() < application.humidity_large_stop + 10000);
+    }
+
+    ventilation_state = humidity_ventilation_state || application.external_ventilation_request;
+    bc_gpio_set_output(BC_GPIO_P8, ventilation_state);
+}
+
+void bc_radio_pub_on_buffer(uint64_t *peer_device_address, uint8_t *buffer, size_t length) {
+    bc_led_pulse(&application.builtin_led, 100);
+    switch (buffer[0]) {
+        case VV_RADIO_STRING_STRING: {
+            struct vv_radio_string_string_packet packet;
+            if(vv_radio_parse_incoming_string_buffer(length, buffer, &packet)) {
+                if (packet.device_address == application.my_id) {
+                    bc_led_pulse(&application.external_led, 100);
+                    process_incoming_string_packet(&packet);
+                }
+            }
+            break;
+        }
+        default: {
+            break;
+        }
+    }
+}
+
+static void process_incoming_string_packet(struct vv_radio_string_string_packet *packet) {
+    if(strncmp(packet->key, "vent", 4) == 0 && strncmp(packet->value, "on", 2) == 0) {
+        application.external_ventilation_request = true;
+    } else if(strncmp(packet->key, "vent", 4) == 0 && strncmp(packet->value, "off", 3) == 0) {
+        application.external_ventilation_request = false;
     }
 }
