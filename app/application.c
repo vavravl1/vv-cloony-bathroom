@@ -5,8 +5,6 @@
 #include <bc_button.h>
 #include <bcl.h>
 
-// LED instance
-
 void application_init(void) {
     initialize_led();
     initialize_button();
@@ -19,40 +17,6 @@ void application_init(void) {
 }
 
 void application_task(void) {
-//    bc_i2c_transfer_t transfer;
-//    uint8_t rx_buffer[5];
-//    memset(rx_buffer, 0, sizeof(uint8_t) * 5);
-//
-//    transfer.device_address = 0xC9;
-//    transfer.buffer = rx_buffer;
-//    transfer.length = sizeof(uint8_t) * 5;
-//
-//    for (uint8_t address = 0; address < 255; address++) {
-//        transfer.device_address = address;
-//
-//        if (bc_i2c_read(BC_I2C_I2C0, &transfer)) {
-//            int to_send = address;
-//            bc_radio_pub_int("dth21-address", &to_send);
-//        }
-//    }
-
-//    if (bc_i2c_read(BC_I2C_I2C0, &transfer)) {
-//        for(uint8_t i = 0; i < 5; i++) {
-//            int val = rx_buffer[i];
-//            bc_radio_pub_int("dth21-buffer", &val);
-//        }
-
-//        int scaleValue = rx_buffer[3] & 0x7F; //B01111111;
-//        int signValue = rx_buffer[3] & 0x80; //B10000000;
-//        float temperature =  (rx_buffer[2] + (float) scaleValue / 10);
-//        if (signValue) { // negative temperature
-//            temperature = -temperature;
-//        }
-//        bc_radio_pub_float("dth21-temperature", &temperature);
-//    } else {
-//        bc_led_set_mode(&builtin_led, BC_LED_MODE_BLINK_FAST);
-//    }
-
     adjust_air_ventilation();
     bc_scheduler_plan_current_relative(1000);
 }
@@ -63,8 +27,9 @@ static void initialize_led() {
 
     bc_led_init(&application.external_led, BC_GPIO_P1, false, false);
     bc_led_set_mode(&application.external_led, BC_LED_MODE_OFF);
-}
 
+    bc_led_pulse(&application.builtin_led, 3000);
+}
 
 static void initialize_button() {
     bc_button_init(&application.button, BC_GPIO_P0, BC_GPIO_PULL_UP, true);
@@ -73,7 +38,7 @@ static void initialize_button() {
 
 static void initialize_radio() {
     bc_radio_init(BC_RADIO_MODE_NODE_LISTENING);
-    bc_radio_pairing_request("bathroom-controller", "0.0.1");
+    bc_radio_pairing_request("bathroom-controller-2", "1.0.0");
     bc_radio_set_event_handler(radio_callback, NULL);
 }
 
@@ -130,18 +95,6 @@ static void initialize_external_relay() {
     bc_gpio_set_output(BC_GPIO_P8, false);
 }
 
-static void radio_callback(bc_radio_event_t event, void *param) {
-    bc_led_set_mode(&application.builtin_led, BC_LED_MODE_OFF);
-
-    if (event == BC_RADIO_EVENT_ATTACH) {
-        bc_led_pulse(&application.builtin_led, 1000);
-    } else if (event == BC_RADIO_EVENT_DETACH) {
-        bc_led_pulse(&application.builtin_led, 1000);
-    } else if (event == BC_RADIO_EVENT_INIT_DONE) {
-        application.my_id = bc_radio_get_my_id();
-    }
-}
-
 static void adjust_air_ventilation() {
     bool ventilation_state = (bool)bc_gpio_get_output(BC_GPIO_P8);
     bool humidity_ventilation_state = false;
@@ -156,18 +109,31 @@ static void adjust_air_ventilation() {
                 (bc_scheduler_get_spin_tick() < application.humidity_large_stop + 10000);
     }
 
+//    ventilation_state = humidity_ventilation_state || application.external_ventilation_request || external_button;
     ventilation_state = humidity_ventilation_state || application.external_ventilation_request;
     bc_gpio_set_output(BC_GPIO_P8, ventilation_state);
+    bc_radio_pub_bool("ventilation/-/state", &ventilation_state);
+}
+
+static void radio_callback(bc_radio_event_t event, void *param) {
+    bc_led_set_mode(&application.builtin_led, BC_LED_MODE_OFF);
+
+    if (event == BC_RADIO_EVENT_ATTACH) {
+        bc_led_pulse(&application.builtin_led, 1000);
+    } else if (event == BC_RADIO_EVENT_DETACH) {
+        bc_led_pulse(&application.builtin_led, 1000);
+    } else if (event == BC_RADIO_EVENT_INIT_DONE) {
+        application.my_id = bc_radio_get_my_id();
+    }
 }
 
 void bc_radio_pub_on_buffer(uint64_t *peer_device_address, uint8_t *buffer, size_t length) {
-    bc_led_pulse(&application.builtin_led, 100);
     switch (buffer[0]) {
         case VV_RADIO_STRING_STRING: {
             struct vv_radio_string_string_packet packet;
             if(vv_radio_parse_incoming_string_buffer(length, buffer, &packet)) {
                 if (packet.device_address == application.my_id) {
-                    bc_led_pulse(&application.external_led, 100);
+                    bc_led_pulse(&application.builtin_led, 100);
                     process_incoming_string_packet(&packet);
                 }
             }
