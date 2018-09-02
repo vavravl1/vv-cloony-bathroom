@@ -34,6 +34,10 @@ static void initialize_led() {
 static void initialize_button() {
     bc_button_init(&application.button, BC_GPIO_P0, BC_GPIO_PULL_UP, true);
     bc_button_set_event_handler(&application.button, button_callback, NULL);
+
+    bc_gpio_init(BC_GPIO_P4);
+    bc_gpio_set_mode(BC_GPIO_P4, BC_GPIO_MODE_INPUT);
+    bc_gpio_set_pull(BC_GPIO_P4, BC_GPIO_PULL_UP);
 }
 
 static void initialize_radio() {
@@ -109,8 +113,8 @@ static void adjust_air_ventilation() {
                 (bc_scheduler_get_spin_tick() < application.humidity_large_stop + 10000);
     }
 
-//    ventilation_state = humidity_ventilation_state || application.external_ventilation_request || external_button;
-    ventilation_state = humidity_ventilation_state || application.external_ventilation_request;
+    bool external_button = !bc_gpio_get_input(BC_GPIO_P4);
+    ventilation_state = humidity_ventilation_state || application.external_ventilation_request || external_button;
     bc_gpio_set_output(BC_GPIO_P8, ventilation_state);
     bc_radio_pub_bool("ventilation/-/state", &ventilation_state);
 }
