@@ -51,7 +51,7 @@ static void initialize_tags() {
     bc_tag_temperature_set_update_interval(&application.temperature_tag, 1000);
     bc_tag_temperature_set_event_handler(&application.temperature_tag, temperature_tag_callback, NULL);
 
-    bc_tag_humidity_init(&application.humidity_tag, BC_TAG_HUMIDITY_REVISION_R2, BC_I2C_I2C0,
+    bc_tag_humidity_init(&application.humidity_tag, BC_TAG_HUMIDITY_REVISION_R3, BC_I2C_I2C0,
                          BC_TAG_HUMIDITY_I2C_ADDRESS_DEFAULT);
     bc_tag_humidity_set_update_interval(&application.humidity_tag, 1000);
     bc_tag_humidity_set_event_handler(&application.humidity_tag, humidity_tag_callback,
@@ -72,12 +72,12 @@ static void humidity_tag_callback(bc_tag_humidity_t *tag, bc_tag_humidity_event_
     float humidity;
     if (bc_tag_humidity_get_humidity_percentage(tag, &humidity)) {
         bc_radio_pub_humidity(0, &humidity);
-        if (humidity > 65) {
+        if (humidity > 75) {
             if(application.humidity_large_start == BC_TICK_INFINITY) {
                 application.humidity_large_start = bc_scheduler_get_spin_tick();
             }
             application.humidity_large_stop = BC_TICK_INFINITY;
-        } else {
+        } else if(humidity < 65) {
             if(application.humidity_large_stop == BC_TICK_INFINITY) {
                 application.humidity_large_stop = bc_scheduler_get_spin_tick();
             }
