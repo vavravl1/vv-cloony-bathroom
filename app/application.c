@@ -14,11 +14,12 @@ void application_init(void) {
 
     application.humidity_large_start = BC_TICK_INFINITY;
     application.humidity_large_stop =  BC_TICK_INFINITY;
+    application.last_humidity_pub = BC_TICK_INFINITY;
 }
 
 void application_task(void) {
     adjust_air_ventilation();
-    bc_scheduler_plan_current_relative(1000);
+    bc_scheduler_plan_current_relative(500);
 }
 
 static void initialize_led() {
@@ -48,12 +49,12 @@ static void initialize_radio() {
 
 static void initialize_tags() {
     bc_tag_temperature_init(&application.temperature_tag, BC_I2C_I2C0, BC_TAG_TEMPERATURE_I2C_ADDRESS_ALTERNATE);
-    bc_tag_temperature_set_update_interval(&application.temperature_tag, 1000);
+    bc_tag_temperature_set_update_interval(&application.temperature_tag, 5000);
     bc_tag_temperature_set_event_handler(&application.temperature_tag, temperature_tag_callback, NULL);
 
     bc_tag_humidity_init(&application.humidity_tag, BC_TAG_HUMIDITY_REVISION_R3, BC_I2C_I2C0,
                          BC_TAG_HUMIDITY_I2C_ADDRESS_DEFAULT);
-    bc_tag_humidity_set_update_interval(&application.humidity_tag, 1000);
+    bc_tag_humidity_set_update_interval(&application.humidity_tag, 250);
     bc_tag_humidity_set_event_handler(&application.humidity_tag, humidity_tag_callback,
                                       application.humidity_tag._event_param);
 }
@@ -71,7 +72,7 @@ static void button_callback(bc_button_t *b, bc_button_event_t e, void *p) {
 static void humidity_tag_callback(bc_tag_humidity_t *tag, bc_tag_humidity_event_t event, void *param) {
     float humidity;
     if (bc_tag_humidity_get_humidity_percentage(tag, &humidity)) {
-        bc_radio_pub_humidity(0, &humidity);
+        pub_humidity_in_time(&humidity);
         if (humidity > 75) {
             if(application.humidity_large_start == BC_TICK_INFINITY) {
                 application.humidity_large_start = bc_scheduler_get_spin_tick();
@@ -83,6 +84,13 @@ static void humidity_tag_callback(bc_tag_humidity_t *tag, bc_tag_humidity_event_
             }
             application.humidity_large_start = BC_TICK_INFINITY;
         }
+    }
+}
+
+void pub_humidity_in_time(float *humidity) {
+    if (bc_scheduler_get_spin_tick() > application.last_humidity_pub + 5000) {
+        bc_radio_pub_humidity(0, humidity);
+        application.last_humidity_pub = bc_scheduler_get_spin_tick();
     }
 }
 
@@ -100,23 +108,26 @@ static void initialize_external_relay() {
 }
 
 static void adjust_air_ventilation() {
-    bool ventilation_state = (bool)bc_gpio_get_output(BC_GPIO_P8);
+    bool previous_ventilation_state = (bool)bc_gpio_get_output(BC_GPIO_P8);
     bool humidity_ventilation_state = false;
 
     if (application.humidity_large_start != BC_TICK_INFINITY) {
-        humidity_ventilation_state = ventilation_state ||
+        humidity_ventilation_state = previous_ventilation_state ||
                 (bc_scheduler_get_spin_tick() > application.humidity_large_start + 10000);
     }
 
     if (application.humidity_large_stop != BC_TICK_INFINITY) {
-        humidity_ventilation_state = ventilation_state &&
+        humidity_ventilation_state = previous_ventilation_state &&
                 (bc_scheduler_get_spin_tick() < application.humidity_large_stop + 10000);
     }
 
     bool external_button = !bc_gpio_get_input(BC_GPIO_P4);
-    ventilation_state = humidity_ventilation_state || application.external_ventilation_request || external_button;
+    bool ventilation_state = humidity_ventilation_state || application.external_ventilation_request || external_button;
     bc_gpio_set_output(BC_GPIO_P8, ventilation_state);
-    bc_radio_pub_bool("ventilation/-/state", &ventilation_state);
+
+    if(ventilation_state != previous_ventilation_state) {
+        bc_radio_pub_bool("ventilation/-/state", &ventilation_state);
+    }
 }
 
 static void radio_callback(bc_radio_event_t event, void *param) {

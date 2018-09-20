@@ -18,6 +18,7 @@ struct {
 
     bc_tick_t humidity_large_start;
     bc_tick_t humidity_large_stop;
+    bc_tick_t last_humidity_pub;
 
     uint64_t my_id;
 
@@ -38,5 +39,7 @@ static void radio_callback(bc_radio_event_t, void *);
 static void button_callback(bc_button_t *, bc_button_event_t, void *);
 static void humidity_tag_callback(bc_tag_humidity_t *, bc_tag_humidity_event_t, void *);
 static void temperature_tag_callback(bc_tag_temperature_t *, bc_tag_temperature_event_t, void *);
+
+void pub_humidity_in_time(float *humidity);
 
 #endif // _APPLICATION_H
